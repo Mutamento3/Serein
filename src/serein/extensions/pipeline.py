@@ -670,6 +670,48 @@ def overflow_plan(component):
             'hard_skips':[],'host_deferrals':list(component.get('base_event_candidate_overflow') or [])}
 
 
+def bridge_only_skip_plan(component):
+    """Skip a redundant foreign side only when no valid Event or defer path exists."""
+    track_ids=[str(value) for value in component.get('track_ids') or []]
+    if (len(track_ids)!=1 or component.get('parked_context_source_ids')
+            or component.get('base_event_candidate_overflow')):
+        return None
+    track_id=track_ids[0]
+    for candidate in component.get('base_event_candidates') or []:
+        source_ids=[int(value) for value in candidate.get('source_message_ids') or []]
+        roles=candidate.get('source_activity_roles') or {}
+        if any(str(roles.get(str(source_id),roles.get(source_id,'primary_activity')))=='primary_activity'
+               for source_id in source_ids):
+            return None
+    stable_order=[int(item['id']) for item in component.get('messages') or []]
+    stable_ids=set(stable_order)
+    if not stable_ids:
+        return None
+    edge_tracks={}
+    for edge in component.get('context_edges') or []:
+        if edge.get('relation')=='bridge':
+            edge_tracks.setdefault(int(edge['unit_root_message_id']),set()).add(str(edge.get('track_id') or ''))
+    covered=set();roots=[]
+    for membership in component.get('memberships') or []:
+        root=int(membership['unit_root_message_id'])
+        source_ids={int(value) for value in membership.get('source_message_ids') or [root]}
+        selected=source_ids.intersection(stable_ids)
+        if not selected:
+            continue
+        if (not source_ids.issubset(stable_ids)
+                or str(membership.get('routing_role') or '')!='bridge'
+                or str(membership.get('track_id') or '')==track_id
+                or track_id not in edge_tracks.get(root,set())):
+            return None
+        covered.update(source_ids);roots.append(root)
+    if covered!=stable_ids:
+        return None
+    return {'events':[],'skip_source_message_ids':stable_order,'defer_source_message_ids':[],
+            'hard_skips':[],'host_bridge_only_skips':[{
+                'primary_track_id':track_id,'unit_roots':roots,
+                'source_message_ids':stable_order,'reason':'foreign_bridge_only'}]}
+
+
 def curator_omission_plan(component,output):
     stable_ids=sorted({int(item['id']) for item in component.get('messages') or []})
     missing=output['_host_curator_omission']['missing_source_message_ids']
@@ -1731,6 +1773,10 @@ async def _advance_frozen(database,*,include_recent=False,runner=None,retry_repa
         for index,component in enumerate(data['components']):
             if component.get('base_event_candidate_overflow'):
                 plans.append((component,overflow_plan(component),[]))
+                continue
+            bridge_only=bridge_only_skip_plan(component)
+            if bridge_only is not None:
+                plans.append((component,bridge_only,[]))
                 continue
             pretranscribed=await transcribe_component(database,batch,component,index,runner)
             request=request_for(database,batch,'event_curator',component=component,pretranscribed=pretranscribed)

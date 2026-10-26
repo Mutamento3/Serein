@@ -39,6 +39,15 @@ EVENT_CURATOR_BLOCKING_BASE_FLAGS = ('protected', 'manual', 'forked', 'blocked',
 EVENT_ACTIVITY_ROLES = {'origin', 'primary_activity', 'landing', 'origin_bridge', 'landing_bridge', 'bridge'}
 EVENT_BRIDGE_ROLES = {'origin_bridge', 'landing_bridge', 'bridge'}
 _ACTIVITY_ROLES = {'origin', 'primary_activity', 'landing', 'origin_bridge', 'landing_bridge', 'bridge'}
+EVENT_CURATOR_PRIMARY_OWNERSHIP_RULE = (
+    'owned_unit_roots 只选择 unit，activity_role 由 host 生成：unit 的 primary_track 与 Event 的 '
+    'primary_track_id 相同且未被另一条 Event 共享时，才生成 primary_activity；外来 unit 或被多条 Event '
+    '共享的 unit 生成 bridge。每条 Event 必须至少保留一条 primary_activity：可来自所选 base 中继承的非 bridge '
+    '来源，或来自本轮一枚同 Track、未共享的 stable unit。不要把唯一的同 Track unit 同时分给多条 Event。'
+    '若当前 Track 的 stable units 全是其他 Track 给它的 bridge，不得为这一侧 create；只有所选 base 确实继承了 '
+    'primary_activity 时才可能接续，否则按原文实际情况放入 skip/defer，并在 dispositions 说明。不要在输出中填写 '
+    'activity_role，也不要伪造 primary。\n'
+)
 
 
 class CuratorCoverageError(ValueError):
@@ -256,7 +265,7 @@ def build_event_track_curator_prompt(date_view: str, component: dict[str, Any], 
                  + json.dumps(event_track_message_payload(component['boundary_lookahead'], snowflake_message_ids), ensure_ascii=False)
                  + '\n</boundary_lookahead>\n'
                  if component.get('writer_round_gate') and component.get('boundary_lookahead') else '')
-    return (f'[memory_phase: event_track_curator]\n日期范围：{date_view}（日期和沉默都不是 Event 边界）\n\n{agent_rules}\n\n{material_rule}{continuity_rule}{admission_rule}'
+    return (f'[memory_phase: event_track_curator]\n日期范围：{date_view}（日期和沉默都不是 Event 边界）\n\n{agent_rules}\n\n{material_rule}{continuity_rule}{EVENT_CURATOR_PRIMARY_OWNERSHIP_RULE}{admission_rule}'
             '一次完成 admission 与最终 ownership。\n'
             '返回 JSON，decision_review.events 按顺序覆盖所有拟议 Event；同一 Track 的每对相邻 Event 在 boundaries 中说明独立活动，'
             + boundary_rule + 'dispositions 覆盖所有 skip/defer unit；defer 引用真实 parked source ID，'
@@ -416,6 +425,24 @@ def _expand_compact_event_curator_output(output: dict[str, Any], component: dict
                 for source_id in membership.get('source_message_ids') or [root]:
                     if int(source_id) in source_role:
                         source_role[int(source_id)] = 'bridge'
+        if not any(role == 'primary_activity' for role in source_role.values()):
+            root_roles = [{
+                'unit_root': root,
+                'unit_primary_track': str(membership_by_root[root].get('track_id') or ''),
+                'event_owner_count': root_owner_count.get(root, 0),
+                'generated_role': ('bridge' if root_owner_count.get(root, 0) > 1
+                                   or str(membership_by_root[root].get('track_id') or '') != event['primary_track_id']
+                                   else 'primary_activity'),
+            } for root in event['owned_unit_roots']]
+            inherited_roles = {source_id: source_role[source_id] for source_id in selected_source_ids}
+            raise ValueError(
+                f"Track Curator Event #{index} has no generated primary_activity: "
+                f"primary_track_id={event['primary_track_id']!r}, "
+                f"owned_unit_roots={event['owned_unit_roots']!r}, root_roles={root_roles!r}, "
+                f"inherited_source_roles={inherited_roles!r}. activity_role is host-generated; "
+                'keep an inherited primary_activity or an unshared owned unit whose primary Track matches the Event. '
+                'A corridor containing only foreign bridge units must skip/defer them instead of creating an Event.'
+            )
         primary_track_id = event['primary_track_id']
         declared_reading_tracks = {primary_track_id}
         for root in event['owned_unit_roots']:
@@ -639,7 +666,15 @@ def _normalize_expanded_event_curator_output(output: dict[str, Any], component: 
         if not selected_source_ids.issubset(binding_ids):
             raise ValueError('Track Curator old+new source union omitted a base source')
         if not any((item['activity_role'] == 'primary_activity' for item in bindings)):
-            raise ValueError('every Event must have an owned primary_activity')
+            role_summary = {item['source_message_id']: item['activity_role'] for item in bindings}
+            raise ValueError(
+                f"Track Curator Event {event_ref!r} has no generated primary_activity: "
+                f"primary_track_id={primary_track_id!r}, "
+                f"source_roles={role_summary!r}. "
+                'activity_role is host-generated; keep an inherited primary_activity or an unshared owned unit whose '
+                'primary Track matches the Event. A corridor containing only foreign bridge units must skip/defer them '
+                'instead of creating an Event.'
+            )
         if selected_candidates and not (binding_ids & (stable_ids-selected_source_ids)):
             touched=[item['source_message_id'] for item in bindings if item['source_message_id'] in stable_ids]
             held=normalize_disposition(touched,'defer')

@@ -180,6 +180,36 @@ def test_individual_message_routes_and_bridge_ownership(settings):
     assert second_roles[3] == 'bridge'
 
 
+def test_foreign_bridge_only_track_skips_curator_and_writer(settings):
+    raw_archive(settings).ingest([
+        {'source_event_id':str(i),'session_id':'one',
+         'role':'user' if i==1 else 'assistant','text':f'Synthetic bridge {i}',
+         'created_at':f'2025-01-01T00:0{i-1}:00Z'} for i in (1,2)
+    ],source='test')
+    task=asyncio.run(p.advance(settings.database,include_recent=True))
+    p.submit(settings.database,task['job_id'],{
+        'message_assignments':[
+            {'source_message_id':i,'primary_track_ref':'new:1','context_track_refs':['new:2'],
+             'routing_role':'bridge'} for i in (1,2)],
+        'track_updates':[
+            {'track_ref':ref,'subject':ref,'throughline':'Synthetic bridge','status':'active'}
+            for ref in ('new:1','new:2')],
+    })
+    calls=[]
+    async def runner(role,request):
+        calls.append(role)
+        return output_for(role,request)
+    result=asyncio.run(p.advance(settings.database,include_recent=True,runner=runner))
+    assert result['events']==1 and result['processed_originals']==2
+    assert calls==['event_curator','event_writer']
+    with Store(settings.database,read_only=True) as store:
+        curator_jobs=store.conn.execute(
+            "SELECT count(*) FROM pipeline_jobs WHERE role LIKE 'event_curator:%'").fetchone()[0]
+        assert curator_jobs==1
+        assert store.conn.execute('SELECT count(*) FROM fact_events').fetchone()[0]==1
+        assert store.conn.execute('SELECT count(*) FROM fact_event_sources').fetchone()[0]==2
+
+
 def _two_track_bridge_batch(settings):
     raw_archive(settings).ingest([
         {'source_event_id': str(i), 'session_id': 'one',
