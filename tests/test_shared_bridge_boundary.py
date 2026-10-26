@@ -204,7 +204,7 @@ def test_host_shortcuts_only_bridge_corridors_without_a_primary_or_defer_path():
     component = foreign_bridge_component()
     plan = pipeline.bridge_only_skip_plan(component)
     assert plan['events'] == []
-    assert plan['skip_source_message_ids'] == [1, 2]
+    assert plan['skip_source_message_ids'] == []
     assert plan['host_bridge_only_skips'] == [{
         'primary_track_id': 'b', 'unit_roots': [1], 'source_message_ids': [1, 2],
         'reason': 'foreign_bridge_only'}]
@@ -222,7 +222,7 @@ def test_host_shortcuts_only_bridge_corridors_without_a_primary_or_defer_path():
 
     bridge_inherited = copy.deepcopy(inherited)
     bridge_inherited['base_event_candidates'][0]['source_activity_roles']['101'] = 'bridge'
-    assert pipeline.bridge_only_skip_plan(bridge_inherited)['skip_source_message_ids'] == [1, 2]
+    assert pipeline.bridge_only_skip_plan(bridge_inherited)['skip_source_message_ids'] == []
 
     parked = copy.deepcopy(component)
     parked['parked_context_source_ids'] = [99]

@@ -671,7 +671,7 @@ def overflow_plan(component):
 
 
 def bridge_only_skip_plan(component):
-    """Skip a redundant foreign side only when no valid Event or defer path exists."""
+    """No-op a redundant foreign side without voting to skip its sources globally."""
     track_ids=[str(value) for value in component.get('track_ids') or []]
     if (len(track_ids)!=1 or component.get('parked_context_source_ids')
             or component.get('base_event_candidate_overflow')):
@@ -706,7 +706,7 @@ def bridge_only_skip_plan(component):
         covered.update(source_ids);roots.append(root)
     if covered!=stable_ids:
         return None
-    return {'events':[],'skip_source_message_ids':stable_order,'defer_source_message_ids':[],
+    return {'events':[],'skip_source_message_ids':[],'defer_source_message_ids':[],
             'hard_skips':[],'host_bridge_only_skips':[{
                 'primary_track_id':track_id,'unit_roots':roots,
                 'source_message_ids':stable_order,'reason':'foreign_bridge_only'}]}
@@ -1505,6 +1505,18 @@ def extend_track_context(database,component,context_request,*,curator=False):
     return {**component,'context_messages':list(existing.values()),'memberships':component['memberships']+extra,'context_receipt':{'read_source_ids':[m['id'] for m in selected]}}
 
 
+def authoritative_skips(component,source_ids):
+    """Only a source's primary or joint-review corridor may settle it as skipped."""
+    component_tracks={str(value) for value in component.get('track_ids') or []}
+    primary_track_by_source={
+        int(source_id):str(membership.get('track_id') or '')
+        for membership in component.get('memberships') or []
+        for source_id in membership.get('source_message_ids') or [membership['unit_root_message_id']]
+    }
+    return {int(source_id) for source_id in source_ids
+            if primary_track_by_source.get(int(source_id)) in component_tracks}
+
+
 def settle(database,batch,data,routed,plans):
     arc_linking_enabled=bool(read_settings(database)['assignments'].get('arc_linker'))
     if arc_linking_enabled:
@@ -1514,7 +1526,7 @@ def settle(database,batch,data,routed,plans):
     deferred={source for _,plan,_ in plans for source in plan['defer_source_message_ids']}
     skipped=set();settled=set()
     for component,plan,event_results in plans:
-        skipped.update(plan['skip_source_message_ids'])
+        skipped.update(authoritative_skips(component,plan['skip_source_message_ids']))
         for event,written in event_results:
             if not written['evidence_sufficient']:continue
             by_id={m['id']:m for m in component['context_messages']}
@@ -1555,11 +1567,10 @@ def settle(database,batch,data,routed,plans):
                 'curator_image_transcriptions':written.get('curator_image_transcriptions',[]),
                 'source_activity_roles':{str(b['source_message_id']):b['activity_role'] for b in event['source_bindings']}})
             settled.update(key for key in event['source_message_ids'] if key in all_new)
-    # A shared bridge unit may be visible in two bounded Track corridors. Host
-    # settlement is global per raw source, so corridor outcomes need a stable
-    # precedence: defer > settled > skipped. A defer on either side must leave
-    # the source pending for the deferred Track, while a settled Event beats a
-    # skip from the other corridor when no corridor needs to revisit it.
+    # A shared bridge unit may be visible in multiple bounded Track corridors.
+    # Only its primary or joint-review corridor may settle a skip; a foreign
+    # side cannot end processing while the primary Writer still lacks evidence.
+    # Defer remains global, and an accepted Event settles its owned source.
     processed={key:'skipped' for key in skipped-deferred-settled}
     processed.update({key:'settled' for key in settled-deferred})
     assignments,tracks,_=route_result(data,routed)
@@ -1570,6 +1581,7 @@ def settle(database,batch,data,routed,plans):
             'protected_deferrals':[entry for _,plan,_ in plans for entry in plan['hard_skips'] if entry.get('reason')!='no_new_sources'],
             'no_new_source_deferrals':[entry for _,plan,_ in plans for entry in plan['hard_skips'] if entry.get('reason')=='no_new_sources'],
             'candidate_overflow_deferrals':[entry for _,plan,_ in plans for entry in plan.get('host_deferrals',[])],
+            'bridge_only_skips':[entry for _,plan,_ in plans for entry in plan.get('host_bridge_only_skips',[])],
             'curator_omission_deferrals':[entry for _,plan,_ in plans for entry in plan.get('curator_omission_deferrals',[])],
             'image_deferrals':[entry for _,plan,_ in plans for entry in plan.get('image_deferrals',[])],
             'missing_images':[entry for component,_,_ in plans for entry in component.get('missing_images',[])],
