@@ -255,11 +255,11 @@ def create_server(app: Application, *, private=False, http=False):
             if old:
                 legacy_server.add_tool(old.fn, name=name)
                 server.remove_tool(name)
-            annotation = read_only if name == 'read_diary' else ToolAnnotations(
-                readOnlyHint=False, destructiveHint=name in {'set_scene_status', 'delete_diary'},
+            annotation = read_only if name in {'read_diary', 'read_preferences'} else ToolAnnotations(
+                readOnlyHint=False, destructiveHint=name in {'set_scene_status', 'delete_diary', 'delete_preference'},
                 idempotentHint=False, openWorldHint=False)
             server.add_tool(fn, name=name, annotations=annotation,
-                            structured_output=False if name == 'read_diary' else None)
+                            structured_output=False if name in {'read_diary', 'read_preferences'} else None)
             server._tool_manager.get_tool(name).parameters['additionalProperties'] = False
             registered.add(name)
         authored_names = set(authored)
@@ -292,7 +292,7 @@ def create_server(app: Application, *, private=False, http=False):
         if not private and 'save_memory' in selected:
             selected.remove('save_memory')
             selected.update({'write_scene', 'edit_scene'})
-        optional_catalog = internal_tools | set(gated_tools) | {'window_shadow_read','dream_read','memo_create','memo_list','memo_update','window_shadow_write','source_message_search','source_message_read','narrative_volume','read_favorites','promote_event_to_scene','list_event_mailbox','read_event_mailbox','save_event_mailbox_draft'}
+        optional_catalog = internal_tools | set(gated_tools) | {'window_shadow_read','dream_read','memo_create','memo_list','memo_update','window_shadow_write','source_message_search','source_message_read','narrative_volume','read_favorites','promote_event_to_scene','list_event_mailbox','read_event_mailbox','save_event_mailbox_draft','read_preferences','write_preference','edit_preference','delete_preference'}
         if selected - available - optional_catalog:
             raise ValueError('Selected MCP tools are unavailable: '+', '.join(sorted(selected-available-optional_catalog)))
         for name in available-selected:
