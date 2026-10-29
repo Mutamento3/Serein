@@ -3,6 +3,7 @@ import { instanceSettings } from "../storage/instanceStore.js";
 import {UpstreamSettings} from "./UpstreamSettings.jsx";
 import {upstreamModels,taskModelOptions} from "../modelOptions.js";
 import {AgentGuide} from './AgentGuide.jsx';
+import {PendingMaterials} from './PendingMaterials.jsx';
 import {RecallThresholdSettings} from './RecallThresholdSettings.jsx';
 import {upstreamsForSave} from '../upstreamSecrets.js';
 import {memoryAvailabilitySummary,prepareMemoryIndex,indexSafetySummary,resumeIndex,readIndexStatus} from '../memoryPreparation.js';
@@ -259,7 +260,7 @@ export function ModelSettings({page,onOpenEventGuide,onOpenPipeline,onOpenCatalo
       <p>默认回看 3 天（72 小时）：归线读取这段时间内实际归入过原话的 Track，不依赖聊天窗口。旧 Event 不按时间过期；同一 Track 超过 8 条 active leaves 时只 defer 该 Track，避免截断候选后误写。天数修改对新批次生效，已冻结任务保持原材料。</p></div>
       <label className="settings-field"><span>自动 Event 执行方式</span><select value={config.pipeline.execution_mode||'legacy'} onChange={event=>pipelineOption('execution_mode',event.target.value)}>
         {(!config.pipeline.execution_mode||config.pipeline.execution_mode==='legacy')&&<option value="legacy">沿用旧配置（各阶段分别执行）</option>}<option value="api">API</option><option value="agent">Agent</option></select></label>
-      <p>{config.pipeline.execution_mode==='agent'?'通过已认证的 Agent 执行器领取任务。阶段模型选择作为执行提示，执行器需按提示使用相应模型；仅切换此选项不会启动本机 CLI。':'在本页为归线、图片转录、切分、Event 写作分别选模型。图片逐张转录后交给切分和 Writer；图片模型留空时，用切分模型执行转录，该模型仍需视觉能力。图片转录 API 需支持图片和 JSON；Writer 只读文字与转录，不需要视觉能力。'}</p>
+      <p>{config.pipeline.execution_mode==='agent'?'通过已认证的 Agent 执行器领取任务。阶段模型选择作为执行提示，执行器需按提示使用相应模型；仅切换此选项不会启动本机 CLI。':'在本页为归线、图片转录、切分、Event 写作分别选模型。图片逐张转录后交给切分和 Writer；异步转录失败或图片模型留空时，流水线尝试用归线模型转录；无法读取图片则只保留发送图片的数量。图片转录 API 需支持图片和 JSON；Writer 只读文字与转录，不需要视觉能力。'}</p>
       {Object.entries({max_prompt_chars:['完整提示词字符上限',8000,4000000],timeout_seconds:['模型读取超时（秒）',30,1800],event_writer_concurrency:['Event Writer 首轮并发数',1,8],track_lookback_days:['归线 Track 回看天数',1,365]}).map(([key,[label,min,max]])=>
         <label className="settings-field" key={key}><span>{label}</span><input type="number" min={min} max={max} value={config.pipeline[key] ?? (key==='track_lookback_days'?3:'')} onChange={event=>pipelineOption(key,Number(event.target.value))}/></label>)}
       <div className="summary-option-group"><h5>审阅与写入</h5>
@@ -286,6 +287,7 @@ export function ModelSettings({page,onOpenEventGuide,onOpenPipeline,onOpenCatalo
           <AgentGuide label="配置 Agent 整理 Event" />
       <div className="settings-actions"><button disabled={busy} type="submit">{busy?'处理中…':'保存自动摘要设置'}</button></div>
       </fieldset></form>}<p role="status">{status}</p></section>
+      {page==='summary'&&<PendingMaterials/>}
     </div>
   </>;
 }

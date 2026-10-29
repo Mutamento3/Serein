@@ -95,15 +95,19 @@ def load_tracks(store, source, session, before_id, message, *, lookback_days=3):
             from .pipeline_recovery import _frames
             producer=store.conn.execute('SELECT b.* FROM pipeline_route_provenance r '
                 'JOIN pipeline_batches b ON b.id=r.batch_id WHERE r.raw_id=?',(original['id'],)).fetchone()
-            historical=None
+            historical=None;future_pending_frame=False
             if producer:
                 for frame in _frames(store.conn.execute('PRAGMA database_list').fetchone()[2],dict(producer)):
-                    if max(m['id'] for m in frame['messages'])>=before_id:continue
-                    if any(datetime.fromisoformat(m['created_at'].replace('Z','+00:00'))>reference for m in frame['messages']):continue
                     if original['id'] not in {m['id'] for m in frame['messages']}:continue
+                    if (max(m['id'] for m in frame['messages'])>=before_id or
+                            any(datetime.fromisoformat(m['created_at'].replace('Z','+00:00'))>reference for m in frame['messages'])):
+                        future_pending_frame=True
+                        continue
                     historical=next((c for c in frame['tracks'] if c['track_id']==card['track_id']),None)
                     if historical:break
             if historical is None:
+                if future_pending_frame and store.conn.execute("SELECT 1 FROM pipeline_pending_materials WHERE batch_id=? AND status IN ('open','running')",(producer['id'],)).fetchone():
+                    continue  # Retained frames become recallable only after their whole source window.
                 raise p.RoutingRecoveryError('No bounded historical pre-routing Track frame: '+card['track_id'])
             card=historical
             assert_before(store,[card],before_id)

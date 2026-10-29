@@ -108,7 +108,26 @@ def routes(settings,auth):
                 (value.get('job_id',''),))] if store.conn.execute("SELECT 1 FROM sqlite_master WHERE name='pipeline_attempts'").fetchone() else []
         if value.get('blocked_scopes') and value['status'] in ('idle','completed'):
             value.update(status='blocked',stage='blocked')
+        from ..extensions.pipeline_pending import entries,recover_runs,initialize as initialize_pending
+        with Store(settings.database) as store:
+            initialize_pending(store.conn)
+            recover_runs(store.conn,value['status'])
+            value['pending_materials']=entries(store.conn) if store.conn.execute("SELECT 1 FROM sqlite_master WHERE name='pipeline_batches'").fetchone() else []
         return value
+
+    @router.get('/v1/pipeline/pending/{pending_id}')
+    def pending_detail(pending_id:int):
+        from ..extensions.pipeline_pending import detail
+        return detail(settings.database,pending_id)
+
+    @router.post('/v1/pipeline/resume-pending')
+    async def resume_pending(body:dict):
+        from ..extensions.pipeline_pending import resume
+        from ..work_tasks import execute
+        pending_id=body.get('pending_id');replan=body.get('replan',False)
+        if type(pending_id) is not int or type(replan) is not bool:raise ValueError('待办编号与重新切分选项无效')
+        async def operation():return resume(settings.database,pending_id,replan=replan)
+        return await execute(settings.database,'pipeline',operation)
 
     @router.post('/v1/pipeline/retry-batch')
     async def retry_pipeline_batch(body:dict):

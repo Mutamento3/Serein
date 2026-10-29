@@ -44,7 +44,7 @@ def failed(settings, *, tail=False):
         with pytest.raises(OSError):
             asyncio.run(p.advance(settings.database, include_recent=True, runner=broken))
     result = asyncio.run(p.advance(settings.database, include_recent=True, runner=broken))
-    assert result['status'] == 'paused'
+    assert result['status'] == 'retained'
     return result['batch_id']
 
 
@@ -185,7 +185,7 @@ def test_daytime_router_failure_can_skip_or_start_smaller_event_batches(settings
         asyncio.run(p.flush_routes(settings.database))
         Clock.value += timedelta(minutes=11)
     with Store(settings.database, read_only=True) as store:
-        batch_id = store.conn.execute("SELECT id FROM pipeline_batches WHERE status='paused_failure'").fetchone()[0]
+        batch_id = store.conn.execute("SELECT id FROM pipeline_batches WHERE status='waiting_materials'").fetchone()[0]
     assert batch_id.startswith('route:')
     assert recovery.recovery_preview(settings.database, batch_id, 5000)['originals'] == 12
     if action == 'skip':

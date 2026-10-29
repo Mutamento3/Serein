@@ -612,5 +612,7 @@
   "web/src/components/WhisperTitle.jsx",
   "web/src/components/darkroomGlyphs.js",
   "web/src/components/darkroomInk.js",
-  "web/tests/darkroom-ink.test.mjs"
+  "web/tests/darkroom-ink.test.mjs",
+  "src/serein/extensions/pipeline_pending.py",
+  "web/src/components/PendingMaterials.jsx"
 ]

@@ -27,6 +27,7 @@ test('catalog saves tolerate incompatible pipeline fields and preserve pending c
   const saves=[];
   let rejectNext=false;
   globalThis.fetch=async(url,options={})=>{
+    if(url==='/__serein/pipeline/status')return {ok:true,json:async()=>({pending_materials:[]})};
     if(url==='/__serein/settings/index-status')return {ok:true,json:async()=>structuredClone(state.index_status)};
     assert.equal(url,'/__serein/settings');
     if(options.method==='PATCH'){

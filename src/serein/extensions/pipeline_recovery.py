@@ -14,7 +14,7 @@ from . import pipeline_tracks as tracks
 
 MAX_HISTORY_BATCHES = 64
 MAX_HISTORY_JOBS = 256
-SOURCE_STATES = ('routed', 'done', 'superseded_input_budget')
+SOURCE_STATES = ('routed', 'done', 'superseded_input_budget', 'waiting_materials')
 MESSAGE_KEYS = ('id', 'source', 'source_event_id', 'original_session_id',
                 'session_id', 'role', 'content', 'created_at')
 # rc65 before the replay-seed fix, with Windows CRLF or release LF files.
@@ -278,10 +278,21 @@ def assert_downstream_snapshot(database, batch, data):
             roots = {u['unit_root_message_id'] for u in component['memberships']}
             bounded = {**frozen, 'memberships': [u for u in frozen['memberships']
                                                 if u['unit_root_message_id'] in roots]}
+            pending_read=frozen.get('pending_material_read')
+            if pending_read:
+                original_ids={m['id'] for m in component['messages']}
+                extra={m['id'] for m in frozen['messages']}-original_ids
+                if extra and (frozen.get('adopted_pending_ids')!=[pending_read['id']]
+                        or extra!={m['id'] for m in pending_read['messages']}):
+                    raise ValueError('pending material ownership differs from the explicit adoption')
+                bounded['messages']=[m for m in frozen['messages'] if m['id'] in original_ids]
+                allowed_sessions=set(component.get('context_session_ids',[]))|{m['session_id'] for m in pending_read['messages']}
+                if not set(frozen.get('context_session_ids',[])).issubset(allowed_sessions):raise ValueError('pending read has unrelated sessions')
+                bounded['context_session_ids']=component.get('context_session_ids',[])
             if (p._component_signature([bounded]) != p._component_signature([component])
-                    or [_message_key(m) for m in frozen['messages']] != [_message_key(m) for m in component['messages']]
+                    or [_message_key(m) for m in bounded['messages']] != [_message_key(m) for m in component['messages']]
                     or frozen.get('base_event_candidates', []) != component.get('base_event_candidates', [])
-                    or frozen.get('context_session_ids', []) != component.get('context_session_ids', [])):
+                    or bounded.get('context_session_ids', []) != component.get('context_session_ids', [])):
                 raise ValueError('frozen ownership, bridge endpoints or predecessors differ')
         except (AttributeError, IndexError, KeyError, TypeError, ValueError) as error:
             raise p.RoutingRecoveryError('downstream job disagrees with frozen component: '+str(error)) from error
@@ -296,7 +307,7 @@ async def rebuild(database, batch_id, confirm):
     return await execute(database, 'pipeline', operation)
 
 
-RECOVERABLE = ('pending', 'paused_failure', 'retry_wait', 'routing_only', 'needs_repair')
+RECOVERABLE = ('pending', 'paused_failure', 'retry_wait', 'routing_only', 'needs_repair', 'waiting_materials')
 
 
 def _recovery_scope(store, batch_id):
@@ -314,6 +325,8 @@ def _recovery_scope(store, batch_id):
     if not stable or not _same_scope(data, routing):
         raise Conflict('无法确认本批原话范围，请先检查批次记录')
     stable_ids = {m['id'] for m in stable}
+    reserved=store.conn.execute("SELECT pm.id FROM pipeline_pending_materials pm,json_each(pm.source_ids_json) s WHERE pm.status IN ('open','running') AND pm.batch_id<>? AND s.value IN ("+','.join('?' for _ in stable_ids)+") LIMIT 1",(batch_id,*sorted(stable_ids))).fetchone()
+    if reserved:raise Conflict('原话已由待办 '+str(reserved['id'])+' 保留，请先处理对应待办')
     if len(stable_ids) != len(stable) or not stable_ids.issubset({m['id'] for m in routing}):
         raise Conflict('本批原话编号不完整，不能继续操作')
     for unit in p.dialogue_units(routing):
@@ -495,4 +508,6 @@ def _rebuild(database, batch_id, *, recovery_action=None, max_input_chars=None):
                       'note': '旧计划与模型结果已保留，尚未处理的原话将重新归线；已保存的 Event 不变。'}
         store.conn.execute("UPDATE pipeline_batches SET status='superseded_repair',result_json=? WHERE id=?",
                            (encode(audit), batch_id))
+        store.conn.execute("UPDATE pipeline_pending_materials SET status=?,updated_at=? WHERE batch_id=? AND status IN ('open','running')",
+                           ('resolved_skipped' if recovery_action=='skip' else 'resolved_rebuilt',now(),batch_id))
         return result

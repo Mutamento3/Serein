@@ -366,8 +366,9 @@ def test_untrusted_persisted_snapshot_requires_full_annotation_before_writer(set
     if damage in {'source_ref_content', 'source_ref_hash'}:
         # Full review reaches Writer, but the independent evidence projection
         # must still reject a corrupted historical content binding on commit.
-        with pytest.raises(ValueError, match='Event evidence must include its exact original content'):
-            asyncio.run(p.advance(settings.database, include_recent=True, runner=second))
+        result=asyncio.run(p.advance(settings.database, include_recent=True, runner=second))
+        assert result['status']=='retained'
+        assert 'Event evidence must include its exact original content' in result['reason']
         assert len(accepted_full) == len(writer_calls) == 1
         assert _active_details(settings.database) == [old]
         with Store(settings.database, read_only=True) as store:
