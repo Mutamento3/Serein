@@ -147,6 +147,21 @@ def routes(settings,auth):
         from ..extensions.pipeline_recovery import rebuild
         return await rebuild(settings.database,body.get('batch_id'),body.get('confirm'))
 
+    @router.post('/v1/pipeline/recovery-preview')
+    def pipeline_recovery_preview(body:dict):
+        from ..extensions.pipeline_recovery import recovery_preview
+        return recovery_preview(settings.database,body.get('batch_id'),body.get('max_input_chars'))
+
+    @router.post('/v1/pipeline/skip-batch')
+    async def pipeline_skip_batch(body:dict):
+        from ..extensions.pipeline_recovery import recover_batch
+        return await recover_batch(settings.database,body.get('batch_id'),'skip',body.get('confirm'))
+
+    @router.post('/v1/pipeline/rebatch')
+    async def pipeline_rebatch(body:dict):
+        from ..extensions.pipeline_recovery import recover_batch
+        return await recover_batch(settings.database,body.get('batch_id'),'rebatch',body.get('confirm'),body.get('max_input_chars'))
+
     @router.post('/v1/pipeline/next')
     def pipeline_next(body:dict):
         if type(body.get('include_recent',True)) is not bool:raise ValueError('include_recent must be boolean')

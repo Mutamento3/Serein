@@ -381,9 +381,9 @@ def test_untrusted_persisted_snapshot_requires_full_annotation_before_writer(set
 
 
 @pytest.mark.parametrize('old_use, expected_rounds', [('main', 2), ('mixed', 2), ('omit', 1), ('background', 1)])
-@pytest.mark.parametrize('reduce_input', [False, True])
-def test_incremental_gate_matches_legacy_full_material_count(settings, old_use, expected_rounds, reduce_input):
-    save_settings(settings.database, {'pipeline': {'material_review_enabled': True, 'curator_summary_first': reduce_input}})
+@pytest.mark.parametrize('legacy_reduce_input', [False, True])
+def test_incremental_gate_matches_legacy_full_material_count(settings, old_use, expected_rounds, legacy_reduce_input):
+    save_settings(settings.database, {'pipeline': {'material_review_enabled': True, 'curator_summary_first': legacy_reduce_input}})
     first_ids = _ingest_window(settings, 1)
     first_materials = [_material(first_ids[0], old_use), _material(first_ids[1])]
 

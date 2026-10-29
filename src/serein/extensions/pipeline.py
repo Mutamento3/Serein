@@ -156,9 +156,9 @@ def rules(role,database):
 UNFINISHED="'pending','needs_repair','paused_failure','retry_wait','routing_only'"
 SCOPE_HEAD="""NOT EXISTS (SELECT 1 FROM pipeline_batches h WHERE h.scope=b.scope
     AND h.status IN ("""+UNFINISHED+""") AND
-    (COALESCE(json_extract(h.input_json,'$.queue_order'),h.rowid),h.rowid)<
-    (COALESCE(json_extract(b.input_json,'$.queue_order'),b.rowid),b.rowid))"""
-QUEUE_ORDER="COALESCE(json_extract(b.input_json,'$.queue_order'),b.rowid),b.rowid"
+    (COALESCE(json_extract(h.input_json,'$.queue_order'),h.rowid),COALESCE(json_extract(h.input_json,'$.recovery_path'),''),h.rowid)<
+    (COALESCE(json_extract(b.input_json,'$.queue_order'),b.rowid),COALESCE(json_extract(b.input_json,'$.recovery_path'),''),b.rowid))"""
+QUEUE_ORDER="COALESCE(json_extract(b.input_json,'$.queue_order'),b.rowid),COALESCE(json_extract(b.input_json,'$.recovery_path'),''),b.rowid"
 
 
 def new_batch(database,include_recent,clock=None,*,retry_repair=False):
@@ -178,6 +178,23 @@ def new_batch(database,include_recent,clock=None,*,retry_repair=False):
             if resumed:return dict(resumed)
         old=store.conn.execute("SELECT b.* FROM pipeline_batches b WHERE b.status='pending' AND "+SCOPE_HEAD+" ORDER BY "+QUEUE_ORDER+" LIMIT 1").fetchone()
         if old:
+            old_data=json.loads(old['input_json'])
+            if old_data.get('rebatch_of'):
+                if old_data.pop('rebatch_load_tracks',False):
+                    first=old_data['routing_messages'][0]
+                    try:
+                        with latest.identity_scope(identity(database)):
+                            tracks,ordinal=track_state.load_tracks(store,first['source'],first['original_session_id'],first['id'],task_message,
+                                lookback_days=old_data['input_policy'].get('track_lookback_days',3))
+                        old_data.update(tracks=tracks,next_track_ordinal=ordinal)
+                    except RoutingRecoveryError as error:
+                        old_data['routing_evidence_error']=str(error)
+                    old_data['recent']=[task_message(row) for row in store.conn.execute(
+                        'SELECT * FROM raw_events WHERE source=? AND session_id=? AND id<? AND julianday(created_at)<=julianday(?) ORDER BY id DESC LIMIT 6',
+                        (first['source'],first['original_session_id'],first['id'],first['created_at']))][::-1]
+                    store.conn.execute('UPDATE pipeline_batches SET input_json=? WHERE id=?',(encode(old_data),old['id']))
+                    return {**dict(old),'input_json':encode(old_data)}
+                return dict(old)
             if store.conn.execute("SELECT 1 FROM pipeline_job_failures f JOIN pipeline_jobs j ON j.id=f.job_id "
                     "WHERE j.batch_id=? AND j.output_json IS NULL AND f.failures>0",(old['id'],)).fetchone():
                 return dict(old)  # A budget change cannot reset a frozen failure ledger.
@@ -628,7 +645,7 @@ def components(database,data,routed,*,include_materials=True):
         component_memberships=[unit for unit in memberships if int(unit['unit_root_message_id']) in roots]
         component_edges=[edge for edge in edges if int(edge['unit_root_message_id']) in roots]
         overflow=[]
-        bases=candidates(database,[track_id],overflow_out=overflow) if include_materials else []
+        bases=candidates(database,[track_id],overflow_out=overflow) if include_materials and policy.get('event_history_enabled',True) else []
         context={a['source_message_id']:by_id[a['source_message_id']] for a in direct}
         for base in bases:
             context.update({m['id']:m for m in base['originals']})

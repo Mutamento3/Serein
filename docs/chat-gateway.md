@@ -63,6 +63,8 @@ turns; an in-progress tool continuation cannot restore the previous settings' ca
 
 ## Worldbook and raw dialogue
 
+Kelivo 的已知系统记忆前缀也从召回查询和新增原话归档中排除：须以其固定中英文系统说明开头，并包含完整 `user_profile` 和按序的四类 `user_memory` 块；旧版 `user_memory_update` 前缀同样支持。只有完整的开头包装会被移除，保留后面的用户正文和图片；正文中的引用、代码示例、任意 XML 和不完整包装不按此规则删除。客户端原始请求仍完整发给聊天模型，已存在的原话与 Event 来源不批量重写。
+
 完整的 `<worldbook>…</worldbook>` 是客户端背景设定，不是用户本轮原话。
 召回查询和新增原话归档都会排除整个区块（包括多个 entry、多段、多行、大小写与带属性的标签），
 保留区块外的对话文字和图片附件。归档在生成本轮去重标识之前清理世界书，直接 raw ingest

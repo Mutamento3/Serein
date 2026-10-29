@@ -225,6 +225,7 @@ class PipelinePatch(BaseModel):
     material_review_enabled: bool | None = None
     round_gate_enabled: bool | None = None
     append_protected_enabled: bool | None = None
+    event_history_enabled: bool | None = Field(default=None,strict=True)
 
 
 class RecallPatch(BaseModel):

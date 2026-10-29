@@ -195,9 +195,9 @@ def event_curator_model_input(component: dict[str, Any], snowflake_message_ids: 
 
 def build_event_track_curator_prompt(date_view: str, component: dict[str, Any], snowflake_message_ids: set[int] | None=None, *, include_role_rules: bool=True) -> str:
     model_input = event_curator_model_input(component, snowflake_message_ids)
-    base_reading_rule = ('已开启减小输入：候选旧 Event 只提供标题、正文与来源编号，需要核对旧主张时按 event_id 补读。'
+    base_reading_rule = ('候选旧 Event 先提供标题、正文与来源编号，需要核对旧主张时按 event_id 补读。'
                          if component.get('curator_summary_first',False) else
-                         '减小输入已关闭：候选旧 Event 提供完整绑定原话，结合原话与已保存正文判断接续。')
+                         '本批候选旧 Event 提供完整绑定原话，结合原话与已保存正文判断接续。')
     agent_rules = materialize_agent_rules('event_curator') if include_role_rules else ''
     format_hint = {'events': [{'action': 'create', 'base_event_ids': [], 'primary_track_id': 'track_id', 'owned_unit_roots': [1]}],
                    'skip_unit_roots': [], 'defer_unit_roots': [],

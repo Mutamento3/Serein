@@ -8,6 +8,8 @@ export function PipelineSettings({onOpenSummary}) {
   const [limits,setLimits]=useState(null);
   const mounted=useRef(true),polling=useRef(false),rebuildDialog=useRef(null),restoreDialog=useRef(null);
   const [rebuildTarget,setRebuildTarget]=useState('');
+  const recoveryDialog=useRef(null);
+  const [recovery,setRecovery]=useState(null),[recoveryLimit,setRecoveryLimit]=useState('');
   const running=['queued','running'].includes(work?.status);
   const holds=work?.blocked_scopes||[];
   const repairHold=holds.find(item=>item.hold_status==='needs_repair');
@@ -17,6 +19,7 @@ export function PipelineSettings({onOpenSummary}) {
   const failure=work?.error||(needsRepair?work?.result?.reason:'');
   const candidateOverflows=work?.result?.candidate_overflow_deferrals||[];
   const curatorOmissions=work?.result?.curator_omission_deferrals||[];
+  const failedBatch=['failed','interrupted'].includes(work?.status)&&work.batch_id&&!holds.some(item=>item.batch_id===work.batch_id)?work.batch_id:null;
   const roleNames={track_router:'归线',event_curator:'切分',event_writer:'Event 写作'};
   const autoMessage=limits?.auto_enabled===false?'自动整理已暂停；手动点击“继续整理”仍可启动任务。'
     :work?.auto_boundary_originals>0?`自动整理已开启，但 ${work.auto_boundary_originals} 条旧原话在启用边界外，需要手动恢复。`
@@ -105,6 +108,42 @@ export function PipelineSettings({onOpenSummary}) {
       setStatus('旧计划与模型结果已保留，正在重新归线；已保存的 Event 不变。');
     }catch(error){setStatus(error.message);}finally{setBusy(false);}
   }
+  async function beginRecovery(action,batchId) {
+    if(busy||running)return;
+    setBusy(true);setStatus('');
+    try {
+      const preview=await call('recovery-preview',{batch_id:batchId});
+      setRecovery({action,preview});setRecoveryLimit(String(preview.max_input_chars));
+      recoveryDialog.current.showModal();
+    }catch(error){setStatus(error.message);}finally{setBusy(false);}
+  }
+  async function previewRecovery() {
+    if(busy||!recovery)return;
+    setBusy(true);
+    try {
+      const preview=await call('recovery-preview',{batch_id:recovery.preview.batch_id,max_input_chars:Number(recoveryLimit)});
+      setRecovery({...recovery,preview});setStatus('');
+    }catch(error){setStatus(error.message);}finally{setBusy(false);}
+  }
+  async function confirmRecovery() {
+    if(busy||!recovery)return;
+    setBusy(true);
+    try {
+      const skip=recovery.action==='skip';
+      const result=await call(skip?'skip-batch':'rebatch',{batch_id:recovery.preview.batch_id,
+        confirm:skip?'SKIP_PIPELINE_BATCH':'REBATCH_PIPELINE_BATCH',...(!skip?{max_input_chars:recovery.preview.max_input_chars}:{})});
+      if(result.status!==(skip?'skipped_batch':'rebatched'))throw new Error('整理任务正在运行，请稍后刷新再操作。');
+      recoveryDialog.current.close();setRecovery(null);setTask(null);setOutput('');
+      const message=skip?`已跳过本批 ${result.skipped_originals} 条原话的 Event 整理，原文保留。`:`已拆成 ${result.batches} 批，旧计划与模型结果保留。`;
+      setStatus(message);
+      try {accept(await call('next',{include_recent:true}));setStatus(message+'后台继续整理。');}
+      catch(error){accept(await call('status'));setStatus(message+'后续任务未启动：'+error.message);}
+    }catch(error){setStatus(error.message);}finally{setBusy(false);}
+  }
+  function recoveryButtons(batchId) {
+    return <><button type="button" disabled={busy||running} onClick={()=>beginRecovery('rebatch',batchId)}>按更小材料重新整理</button>
+      <button type="button" disabled={busy||running} onClick={()=>beginRecovery('skip',batchId)}>跳过本批，保留原话</button></>;
+  }
   function download() {
     const url=URL.createObjectURL(new Blob([JSON.stringify(task,null,2)],{type:'application/json'}));
     const link=document.createElement('a');link.href=url;link.download=task.role+'-task.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -145,8 +184,10 @@ export function PipelineSettings({onOpenSummary}) {
         {item.next_retry_at&&<> 下次重试：{new Date(item.next_retry_at).toLocaleString()}。</>}
         {' '}原文保留，此聊天按序等待，其他聊天可继续；当日尚未全部结算。
         {item.hold_status==='needs_repair'&&<button type="button" disabled={busy||running} onClick={()=>beginRebuild(item.batch_id)}>查看重建确认</button>}
+        {recoveryButtons(item.batch_id)}
       </p>)}
-      {(work.paused_batches||[]).map(batch=><p className="import-error" key={batch.batch_id}>本批已暂停：{batch.reason}。同一聊天的后续整理等待它恢复，其他聊天可继续。<button type="button" disabled={busy||running} onClick={()=>retryBatch(batch.batch_id)}>重试此批次</button></p>)}
+      {(work.paused_batches||[]).map(batch=><p className="import-error" key={batch.batch_id}>本批已暂停：{batch.reason}。同一聊天的后续整理等待它恢复，其他聊天可继续。<button type="button" disabled={busy||running} onClick={()=>retryBatch(batch.batch_id)}>重试此批次</button>{recoveryButtons(batch.batch_id)}</p>)}
+      {failedBatch&&<p className="import-error">批次：<code>{failedBatch}</code>。{recoveryButtons(failedBatch)}</p>}
       {failure&&<p className="import-error">{needsRepair?'待修复原因':'失败原因'}：{failure}</p>}
       {needsRepair&&<p>批次：<code>{repairHold?.batch_id||work.result?.batch_id||work.batch_id}</code>。原话与已完成步骤保留。{runtimeContractRepair?'当前程序与冻结旧计划的版本不一致，重新校验不会迁移旧计划。请查看重建确认，明确同意后才重新归线；也可继续整理其他聊天。':'先重新校验以恢复历史归线；无法恢复时，可明确作废本批计划并重新归线。'}不会跳过原话或删除已保存的 Event。</p>}
       {task&&<p>等待 {stages[task.role]||task.role}：下载任务交给 Agent，再提交返回的 JSON。</p>}</div>}
@@ -166,6 +207,26 @@ export function PipelineSettings({onOpenSummary}) {
       <div className="settings-actions"><button type="button" disabled={busy} onClick={()=>{rebuildDialog.current.close();setRebuildTarget('');}}>取消</button>
         <button type="button" disabled={busy||!rebuildTarget} onClick={confirmRebuild}>确认作废旧计划并重新归线</button></div>
       <p role="status">{status}</p>
+    </dialog>
+    <dialog ref={recoveryDialog} className="agent-guide" aria-labelledby="pipeline-recovery-title" onCancel={()=>setRecovery(null)}>
+      {recovery&&<><h3 id="pipeline-recovery-title">{recovery.action==='skip'?'跳过这批 Event 整理？':'按更小材料重新整理'}</h3>
+        <p>批次：<code>{recovery.preview.batch_id}</code></p>
+        <p>范围：{recovery.preview.originals} 条未整理原话，共 {recovery.preview.original_chars} 字符。<br/>
+          {new Date(recovery.preview.first_at).toLocaleString()} — {new Date(recovery.preview.last_at).toLocaleString()}</p>
+        <p>原文、旧任务记录和已保存的 Event 保留。只处理上述范围，后续新聊天仍会继续整理。</p>
+        {recovery.action==='skip'?<p>确认后，这批原话不再自动生成 Event。尚未完成的对话尾巴不在跳过范围内。</p>:<>
+          <label className="settings-field"><span>本批每次最多读取的原话字符</span><input type="number" min="2000" max="100000" value={recoveryLimit} onChange={event=>setRecoveryLimit(event.target.value)}/></label>
+          <button type="button" disabled={busy} onClick={previewRecovery}>查看拆分结果</button>
+          {Number(recoveryLimit)!==recovery.preview.max_input_chars?<p>上限已修改，请重新查看拆分结果。</p>:<>
+            <p>按完整问答拆成 {recovery.preview.batches} 批，最大一批 {Math.max(...recovery.preview.batch_chars)} 字符。此上限仅用于本批，不改变全局设置。</p>
+            {!recovery.preview.can_rebatch&&<p>当前上限无法继续拆分，可降低上限，或取消后选择跳过本批。</p>}
+            {recovery.preview.oversized_batches>0&&<p>其中 {recovery.preview.oversized_batches} 批包含超长完整问答，仍会整包保留，可能再次失败。</p>}
+          </>}
+          <p>新计划使用当前设置，按顺序重新归线和写作，可能产生模型调用费用。</p>
+        </>}
+        <div className="settings-actions"><button type="button" disabled={busy} onClick={()=>{recoveryDialog.current.close();setRecovery(null);}}>取消</button>
+          <button type="button" disabled={busy||(recovery.action==='rebatch'&&(!recovery.preview.can_rebatch||Number(recoveryLimit)!==recovery.preview.max_input_chars))} onClick={confirmRecovery}>{recovery.action==='skip'?'确认跳过本批':'确认拆小并整理'}</button></div>
+        <p role="status">{status}</p></>}
     </dialog>
     <dialog ref={restoreDialog} className="agent-guide" aria-labelledby="pipeline-restore-title">
       <h3 id="pipeline-restore-title">恢复自动边界外的原话？</h3>

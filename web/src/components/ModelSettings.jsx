@@ -240,7 +240,6 @@ export function ModelSettings({page,onOpenEventGuide,onOpenPipeline,onOpenCatalo
       <p className="model-connection-help">Event Writer 要核对原话、人物、因果和修订，再写出自然正文；建议为“原话 · Event 写作”选择理解和写作能力较强的模型。</p>
       {config&&<form onSubmit={saveSummary}><fieldset className="model-settings-fields" disabled={busy}>
       <label className="settings-toggle"><span><strong>自动摘要</strong><small>自动把新聊天整理为 Event。每次从关闭改为开启时，从保存后的新原话开始，不补跑此前积压。</small></span><input type="checkbox" role="switch" checked={config.pipeline.auto_enabled!==false} onChange={event=>pipelineOption('auto_enabled',event.target.checked)}/></label>
-      <label className="settings-toggle"><span><strong>减小输入</strong><small>仅向切分模型提供旧 Event 正文，需要时再补读原话。可能漏掉旧细节，影响续接判断或材料取舍；不能保证模型会主动补读。默认关闭，保存后用于新批次。</small></span><input type="checkbox" role="switch" checked={config.pipeline.curator_summary_first??false} onChange={event=>pipelineOption('curator_summary_first',event.target.checked)}/></label>
       <label className="settings-toggle"><span><strong>自动摘要 Agent 工具</strong><small>允许外部 Agent 领取任务、提交结果和重建计划；与自动摘要开关独立。</small></span><input type="checkbox" role="switch" checked={agentDraft??!!config.features.pipeline_agent} onChange={event=>setAgentDraft(event.target.checked)}/></label>
       <div className="model-assignment-groups">{taskGroups.filter(group=>group.key==="events").map(group=><section className="model-assignment-group" key={group.key} aria-labelledby={`model-group-${group.key}`}>
         <div className="model-assignment-group__heading"><h4 id={`model-group-${group.key}`}>阶段模型</h4><p>{group.help}</p></div>
@@ -253,6 +252,7 @@ export function ModelSettings({page,onOpenEventGuide,onOpenPipeline,onOpenCatalo
     <section className="model-assignment-group summary-runtime-settings" aria-labelledby="summary-runtime-title">
       <div className="model-assignment-group__heading"><h4 id="summary-runtime-title">运行与输入</h4></div>
       <div className="summary-settings-notes"><p>有时间按 20 分钟沉默切块；无时间按 20 轮完整问答切块。每块再受字符量限制，保留完整问答和原始编号。时间切块只控制输入，不直接决定 Event 边界。</p>
+      <p>切分先读旧 Event 正文，需要时再补读原话。</p>
       <p>自动摘要可能有遗漏或误解，重要内容请对照原始对话核对。</p>
       <p>“完整提示词字符上限”是最终模型调用保护，可按所用模型上下文提高到 4000000；修改后下一次继续当前批次即可生效。</p>
       <p>只并发 Curator 已冻结计划后的第一轮 Event Writer；Router、Curator、补读与最终结算保持串行。Agent 模式仍一次领取一个 Writer 任务。默认 1。</p>
@@ -262,7 +262,9 @@ export function ModelSettings({page,onOpenEventGuide,onOpenPipeline,onOpenCatalo
       <p>{config.pipeline.execution_mode==='agent'?'通过已认证的 Agent 执行器领取任务。阶段模型选择作为执行提示，执行器需按提示使用相应模型；仅切换此选项不会启动本机 CLI。':'在本页为归线、图片转录、切分、Event 写作分别选模型。图片逐张转录后交给切分和 Writer；图片模型留空时，用切分模型执行转录，该模型仍需视觉能力。图片转录 API 需支持图片和 JSON；Writer 只读文字与转录，不需要视觉能力。'}</p>
       {Object.entries({max_prompt_chars:['完整提示词字符上限',8000,4000000],timeout_seconds:['模型读取超时（秒）',30,1800],event_writer_concurrency:['Event Writer 首轮并发数',1,8],track_lookback_days:['归线 Track 回看天数',1,365]}).map(([key,[label,min,max]])=>
         <label className="settings-field" key={key}><span>{label}</span><input type="number" min={min} max={max} value={config.pipeline[key] ?? (key==='track_lookback_days'?3:'')} onChange={event=>pipelineOption(key,Number(event.target.value))}/></label>)}
-      <div className="summary-option-group"><h5>审阅与写入</h5>{[
+      <div className="summary-option-group"><h5>审阅与写入</h5>
+      <label className="settings-toggle"><span><strong>回看旧 Event</strong><small>默认开启。关闭后不加载旧 Event 及其来源候选，新原话只生成新 Event，不续写或合并旧 Event。归线仍可回看 Track，普通聊天的记忆召回不变；保存后用于新批次。</small></span><input type="checkbox" role="switch" checked={config.pipeline.event_history_enabled??true} onChange={event=>pipelineOption('event_history_enabled',event.target.checked)}/></label>
+      {[
         ['joint_review_enabled','跨线联合审阅','有明确桥接时，让 Curator 一次核对相连的少量 Track；合并 Event 仍须逐字证据。'],
         ['material_review_enabled','逐条材料取舍','让 Curator 标明每条 owned 原话的写作用途，再传给 Writer；来源绑定仍完整保留。'],
         ['round_gate_enabled','普通交流轮次门槛','至少两轮完整交流才进入 Writer；未结束的短段等待后续原话，明确结束的短段跳过。'],

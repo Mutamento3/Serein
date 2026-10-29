@@ -512,7 +512,8 @@ def test_rebuild_audits_orphan_provenance_before_invalidating_it(settings):
         assert store.conn.execute('SELECT count(*) FROM pipeline_route_provenance').fetchone()[0] == 0
 
 
-def test_upgrade_rebuild_freezes_current_revision_and_preserves_old_producer(settings):
+@pytest.mark.parametrize('old_summary_first', [None, False])
+def test_upgrade_rebuild_freezes_current_revision_and_preserves_old_producer(settings, old_summary_first):
     ingest(settings)
     batch, data = freeze(settings)
     history(settings, data)
@@ -521,6 +522,10 @@ def test_upgrade_rebuild_freezes_current_revision_and_preserves_old_producer(set
         for key in (batch['id'], 'route:synthetic'):
             row = store.conn.execute('SELECT input_json FROM pipeline_batches WHERE id=?', (key,)).fetchone()
             old = json.loads(row[0]);old['runtime_revision'] = old_revision
+            if old_summary_first is None:
+                old['input_policy'].pop('curator_summary_first', None)
+            else:
+                old['input_policy']['curator_summary_first'] = old_summary_first
             store.conn.execute('UPDATE pipeline_batches SET input_json=? WHERE id=?', (encode(old), key))
         producer = store.conn.execute("SELECT input_json FROM pipeline_batches WHERE id='route:synthetic'").fetchone()[0]
     held = asyncio.run(p.advance(settings.database, include_recent=True, runner=synthetic_runner))
@@ -531,6 +536,7 @@ def test_upgrade_rebuild_freezes_current_revision_and_preserves_old_producer(set
                                              (rebuilt['batch_id'],)).fetchone()[0])
         assert fresh['contract'] == p.CONTRACT
         assert fresh['runtime_revision'] == p.runtime_revision() != old_revision
+        assert fresh['input_policy']['curator_summary_first'] is True
         assert store.conn.execute("SELECT input_json FROM pipeline_batches WHERE id='route:synthetic'").fetchone()[0] == producer
 
 
