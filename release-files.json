@@ -614,5 +614,11 @@
   "web/src/components/darkroomInk.js",
   "web/tests/darkroom-ink.test.mjs",
   "src/serein/extensions/pipeline_pending.py",
-  "web/src/components/PendingMaterials.jsx"
+  "web/src/components/PendingMaterials.jsx",
+  "web/server/narrativeErrors.mjs",
+  "web/src/storage/narrativeErrors.js",
+  "tests/test_narrative_delete.py",
+  "tests/test_narrative_rename.py",
+  "web/tests/narrative-errors.test.mjs",
+  "web/tests/narrative-flow.test.mjs"
 ]
